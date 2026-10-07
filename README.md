@@ -91,14 +91,36 @@ Explore the live production deployment hosted on our telemetry probe:
 
 ## 🚀 Quick Start
 
-### 1. Installation
+### ⚡ One-Command Instant Install & Launch (Recommended)
 
-Clone the repository and install the minimal dependencies:
+Run this single command on any Linux server, cloud VPS, or local machine to install ProPing and immediately preview the live dashboard:
+
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/Lagtor-code/ProPing/main/install.sh)
+```
+*Alternative pipe execution:*
+```bash
+curl -sSL https://raw.githubusercontent.com/Lagtor-code/ProPing/main/install.sh | bash
+```
+
+**What it does automatically:**
+* 🔍 Detects system environment & verifies `python3` (auto-installs if missing).
+* 📦 Synchronizes the ProPing engine & datasets.
+* 🛠️ Registers the global `proping` command in your system `$PATH`.
+* 🌐 Detects your server's public IP and starts a temporary HTTP server.
+* 📋 Prints the direct clickable browser link (`http://<YOUR_SERVER_IP>:8080/`).
+* 🛑 Stops cleanly on `Ctrl+C`, leaving the global `proping` CLI ready for future use!
+
+---
+
+### 📦 Manual Installation (Standard)
+
+Clone the repository and run without external dependencies:
 
 ```bash
 git clone https://github.com/Lagtor-code/ProPing.git
 cd ProPing
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### 2. Check Database Status
@@ -136,29 +158,36 @@ This compiles:
 * `dist/index.html` (Master Catalog with all 609 providers)
 * `dist/hourly.html` (Hourly compute catalog with 62 providers)
 
-### 4. Preview in Browser
+### 4. Preview / Host in Browser
 
-Launch the built-in local web server and automatically open the dashboard:
+Launch the built-in HTTP server and view the live dashboard:
 
 ```bash
-python proping.py serve --port 8080
+# Foreground temporary server
+proping serve --port 8080
+
+# Or run in background as a daemon
+proping serve --daemon
+
+# To stop the background daemon
+proping serve --stop
 ```
 
 ---
 
 ## 💻 CLI Command Reference
 
-ProPing provides a unified CLI with subcommands:
+ProPing provides a unified CLI with subcommands (run via `proping` or `python proping.py`):
 
 ```bash
-python proping.py [command] [options]
+proping [command] [options]
 ```
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
+| **`serve`** | `-p, --port`<br>`--host`<br>`--daemon`<br>`--stop`<br>`-d, --dir` | Spawns zero-dependency HTTP server, detects public IP, and prints direct browser links. |
 | **`build`** | `-i, --input`<br>`-o, --output`<br>`--hourly-output` | Compiles raw JSON datasets into the NewUI HTML dashboards. |
 | **`status`** | `-i, --input` | Prints high-level metrics, provider counts, and latency stats. |
-| **`serve`** | `-p, --port`<br>`-d, --dir`<br>`--no-browser` | Spawns a local HTTP server and opens the dashboard in your default browser. |
 | **`benchmark`** | `-t, --target`<br>`-i, --input`<br>`-c, --count`<br>`-w, --workers` | Runs multi-threaded ICMP ping tests and calculates min/avg/max/jitter. |
 
 ### Single-Target Ping Example:

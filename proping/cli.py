@@ -9,6 +9,10 @@ import sys
 import os
 import json
 import webbrowser
+import socket
+import urllib.request
+import signal
+import subprocess
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import threading
 
@@ -119,29 +123,150 @@ def cmd_status(args):
     print("=" * 60)
     return 0
 
+def detect_public_ip():
+    """Detect external public IP using lightweight standard library HTTP requests."""
+    endpoints = [
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+        "https://ifconfig.me/ip",
+        "https://ipinfo.io/ip",
+    ]
+    for url in endpoints:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "curl/7.88.1"})
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                raw = resp.read().decode("utf-8").strip()
+                if raw and len(raw.split(".")) == 4:
+                    return raw
+        except Exception:
+            continue
+    return None
+
+def detect_local_ip():
+    """Detect LAN / local network IP."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
 def cmd_serve(args):
-    port = args.port or 8080
-    directory = args.dir or "dist"
+    port = getattr(args, "port", None) or 8080
+    host = getattr(args, "host", None) or "0.0.0.0"
+    directory = getattr(args, "dir", None) or "dist"
+
+    PID_FILE = os.path.expanduser("~/.proping_serve.pid")
+
+    if getattr(args, "stop", False):
+        if os.path.exists(PID_FILE):
+            try:
+                with open(PID_FILE, "r") as f:
+                    pid = int(f.read().strip())
+                if sys.platform == "win32":
+                    os.system(f"taskkill /PID {pid} /F >nul 2>&1")
+                else:
+                    os.kill(pid, signal.SIGTERM)
+                os.remove(PID_FILE)
+                print(f"🛑 Stopped background ProPing server (PID {pid}).")
+                return 0
+            except Exception as e:
+                print(f"⚠️ Could not stop PID {pid}: {e}")
+                if os.path.exists(PID_FILE):
+                    os.remove(PID_FILE)
+                return 1
+        else:
+            print("ℹ️ No background server PID file found.")
+            return 0
+
+    # Ensure index.html exists, auto-compile if missing
+    index_path = os.path.join(directory, "index.html")
+    if not os.path.exists(index_path):
+        if os.path.exists("dist/index.html"):
+            directory = "dist"
+        else:
+            print("⚠️ Dashboard not built yet. Auto-compiling catalogs first...")
+            cmd_build(args)
+
     if not os.path.exists(directory):
         directory = "."
+
+    if getattr(args, "daemon", False):
+        log_file = os.path.expanduser("~/.proping_serve.log")
+        py_exe = sys.executable
+        cli_entry = os.path.abspath(sys.argv[0])
+        cmd = [py_exe, cli_entry, "serve", "--host", host, "--port", str(port), "--dir", directory, "--no-browser"]
+        with open(log_file, "a") as log_f:
+            if sys.platform == "win32":
+                p = subprocess.Popen(cmd, stdout=log_f, stderr=log_f, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            else:
+                p = subprocess.Popen(cmd, stdout=log_f, stderr=log_f, start_new_session=True)
+        with open(PID_FILE, "w") as f:
+            f.write(str(p.pid))
+
+        pub_ip = detect_public_ip() or host
+        print("=" * 66)
+        print("⚡ ProPing Background Daemon Started!")
+        print("=" * 66)
+        print(f"  PID:              {p.pid}")
+        print(f"  🌐 Public Link:   http://{pub_ip}:{port}/")
+        print(f"  📊 Hourly View:   http://{pub_ip}:{port}/hourly.html")
+        print(f"  📝 Log File:      {log_file}")
+        print("=" * 66)
+        print("  💡 To stop daemon anytime, run: proping serve --stop\n")
+        return 0
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
             super().__init__(*a, directory=directory, **kw)
+        def log_message(self, format, *a):
+            # Suppress normal asset logs to keep console clean
+            if a and len(a) > 1 and str(a[1]) not in ("200", "304"):
+                super().log_message(format, *a)
 
-    server = HTTPServer(("127.0.0.1", port), Handler)
-    url = f"http://127.0.0.1:{port}/"
-    print(f"🌐 [SERVE] Serving ProPing Dashboard on {url}")
-    print(f"📁 Root directory: {os.path.abspath(directory)}")
-    print("Press Ctrl+C to stop the server.\n")
+    server = None
+    bind_port = port
+    for p_candidate in [port, port + 1, port + 2, 8000, 8888, 3000]:
+        try:
+            server = HTTPServer((host, p_candidate), Handler)
+            bind_port = p_candidate
+            break
+        except OSError:
+            continue
 
-    if not args.no_browser:
+    if not server:
+        print(f"❌ Could not bind server to host {host} on port {port} or fallback ports.")
+        return 1
+
+    pub_ip = detect_public_ip()
+    local_ip = detect_local_ip()
+
+    print("\n" + "=" * 68)
+    print("  ⚡ ProPing Live Telemetry & Latency Dashboard")
+    print("=" * 68)
+    if pub_ip:
+        print(f"  🌐 Public Link:    http://{pub_ip}:{bind_port}/")
+        print(f"  📊 Hourly Link:    http://{pub_ip}:{bind_port}/hourly.html")
+    if local_ip and local_ip != pub_ip:
+        print(f"  🏠 Local Network:  http://{local_ip}:{bind_port}/")
+    print(f"  💻 Localhost:      http://localhost:{bind_port}/")
+    print(f"  📁 Serving Path:   {os.path.abspath(directory)}")
+    print("=" * 68)
+    print("  👉 Click or paste the Public Link into your browser.")
+    print("  👉 Press Ctrl+C at any time to shut down this temporary server.")
+    print("=" * 68 + "\n")
+
+    if not args.no_browser and pub_ip is None:
+        url = f"http://localhost:{bind_port}/"
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n🛑 Server stopped.")
+        print("\n\n🛑 Temporary ProPing server stopped cleanly.")
+        print("💡 Tip: To run it again anytime, execute: proping serve\n")
     return 0
 
 def cmd_ping(args):
@@ -193,9 +318,12 @@ def main():
     p_status.add_argument("-i", "--input", help="Path to database JSON file")
 
     # Serve
-    p_serve = subparsers.add_parser("serve", help="Run local web server to preview dashboard")
-    p_serve.add_argument("-p", "--port", type=int, default=8080, help="Local HTTP port (default: 8080)")
+    p_serve = subparsers.add_parser("serve", help="Run web server to host dashboard")
+    p_serve.add_argument("--host", default="0.0.0.0", help="Host interface to bind (default: 0.0.0.0)")
+    p_serve.add_argument("-p", "--port", type=int, default=8080, help="HTTP port (default: 8080)")
     p_serve.add_argument("-d", "--dir", default="dist", help="Directory to serve (default: dist)")
+    p_serve.add_argument("--daemon", action="store_true", help="Run server in background as a daemon")
+    p_serve.add_argument("--stop", action="store_true", help="Stop running background server")
     p_serve.add_argument("--no-browser", action="store_true", help="Do not automatically launch browser")
 
     # Ping / Benchmark

@@ -5,12 +5,16 @@ Audits cloud & VPS hosting websites, validates package availability,
 and filters out dead, parked, or suspended domains.
 """
 
-import requests
-import urllib3
+try:
+    import requests
+    import urllib3
+    urllib3.disable_warnings()
+except ImportError:
+    requests = None
+    urllib3 = None
+
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-urllib3.disable_warnings()
 
 DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -61,8 +65,18 @@ def audit_url(url, timeout=7):
         }
 
     try:
-        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=timeout, verify=False, allow_redirects=True)
-        text_lower = resp.text.lower()
+        if requests is not None:
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=timeout, verify=False, allow_redirects=True)
+            text_lower = resp.text.lower()
+        else:
+            import urllib.request
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(url, headers=DEFAULT_HEADERS)
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                text_lower = r.read().decode('utf-8', errors='ignore').lower()
 
         # Check for parked / suspended signatures
         for sig in SUSPENDED_SIGNATURES:

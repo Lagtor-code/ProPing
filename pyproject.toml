@@ -18,7 +18,10 @@ classifiers = [
     "Topic :: System :: Networking",
     "Topic :: Internet :: WWW/HTTP",
 ]
-dependencies = [
+dependencies = []
+
+[project.optional-dependencies]
+fast-http = [
     "requests>=2.28.0",
     "urllib3>=1.26.0",
 ]
