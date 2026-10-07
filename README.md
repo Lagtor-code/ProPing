@@ -236,8 +236,7 @@ ProPing/
 │   ├── index.html              # Standalone Master Catalog (609 nodes)
 │   └── hourly.html             # Standalone Hourly Catalog (62 nodes)
 │
-├── deploy_to_vps.py            # Automated remote Nginx/VPS deployer
-├── requirements.txt            # Minimal dependencies (requests, paramiko, urllib3)
+├── requirements.txt            # Minimal dependencies (requests, urllib3)
 ├── pyproject.toml              # Modern Python build specification
 ├── LICENSE                     # MIT Open-Source License
 └── README.md                   # Complete Documentation

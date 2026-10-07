@@ -53,3 +53,4 @@ part[1-2].txt
 *.tmp
 *.bak
 archive/
+deploy_to_vps.py
