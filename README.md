@@ -95,7 +95,7 @@ Explore the live production deployment hosted on our telemetry probe:
 Clone the repository and install the minimal dependencies:
 
 ```bash
-git clone https://github.com/username/ProPing.git
+git clone https://github.com/Lagtor-code/ProPing.git
 cd ProPing
 pip install -r requirements.txt
 ```
@@ -266,7 +266,7 @@ Contributions are warmly welcomed! You can help by:
 3. Adding new network probe vantage points across different ISPs and IXPs.
 
 To contribute:
-1. Fork the repo (`https://github.com/username/ProPing`).
+1. Fork the repo (`https://github.com/Lagtor-code/ProPing`).
 2. Create your feature branch (`git checkout -b feature/new-providers`).
 3. Commit your changes (`git commit -m 'Add new verified EU providers'`).
 4. Push to the branch (`git push origin feature/new-providers`).
