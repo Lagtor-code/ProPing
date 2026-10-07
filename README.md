@@ -21,7 +21,7 @@
 [![Countries](https://img.shields.io/badge/Global%20Reach-57%20Countries-fbbf24.svg)](#country-directory)
 [![Direct Fiber](https://img.shields.io/badge/Direct%20Fiber-Sub--50ms-10b981.svg)](#latency-tiers)
 
-[🌐 **Live Interactive Demo**](http://109.248.43.154/) · [⏱️ **Hourly Compute Directory**](http://109.248.43.154/master_hourly_directory.html) · [📊 **Raw Telemetry JSON**](http://109.248.43.154/master_cloud_directory.json)
+[🌐 **Live Demo (GitHub Pages)**](https://lagtor-code.github.io/ProPing/) · [⏱️ **Hourly Compute Directory**](https://lagtor-code.github.io/ProPing/hourly.html) · [🛰️ **Probe Server Demo**](http://109.248.43.154/) · [📊 **Raw JSON**](https://raw.githubusercontent.com/Lagtor-code/ProPing/main/data/master_cloud_directory.json)
 
 </div>
 
@@ -82,9 +82,10 @@ Explore the live production deployment hosted on our telemetry probe:
 
 | Dashboard View | Live URL | Description |
 | :--- | :--- | :--- |
-| **Global Master Catalog** | [http://109.248.43.154/](http://109.248.43.154/) | Complete catalog of **609** verified live cloud providers. |
-| **Hourly Compute Directory** | [http://109.248.43.154/master_hourly_directory.html](http://109.248.43.154/master_hourly_directory.html) | Filtered directory of **62** active hourly compute hosts. |
-| **Raw Cloud Dataset** | [http://109.248.43.154/master_cloud_directory.json](http://109.248.43.154/master_cloud_directory.json) | Clean structured JSON database. |
+| **Global Master Catalog (GitHub Pages)** | [https://lagtor-code.github.io/ProPing/](https://lagtor-code.github.io/ProPing/) | Official CDN-cached catalog of **609** verified cloud providers. |
+| **Hourly Compute Directory (GitHub Pages)** | [https://lagtor-code.github.io/ProPing/hourly.html](https://lagtor-code.github.io/ProPing/hourly.html) | Filtered directory of **62** active hourly compute hosts. |
+| **Probe Server Demo (Direct VPS)** | [http://109.248.43.154/](http://109.248.43.154/) | Live telemetry probe hosted directly on Nginx. |
+| **Raw Cloud Dataset** | [data/master_cloud_directory.json](data/master_cloud_directory.json) | Clean structured JSON database. |
 
 ---
 

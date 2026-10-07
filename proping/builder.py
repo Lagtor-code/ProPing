@@ -17,8 +17,11 @@ def build_html_catalog(providers, template_path=None, title_suffix=""):
     """
     Compiles a list of cloud providers into a complete standalone HTML dashboard.
     """
+    repo_template = os.path.join(os.path.dirname(__file__), "..", "templates", "newui_template.html")
     if template_path is None or not os.path.exists(template_path):
-        if os.path.exists(DEFAULT_TEMPLATE_PATH):
+        if os.path.exists(repo_template):
+            template_path = repo_template
+        elif os.path.exists(DEFAULT_TEMPLATE_PATH):
             template_path = DEFAULT_TEMPLATE_PATH
         elif os.path.exists("NewUI.html"):
             template_path = "NewUI.html"
