@@ -32,18 +32,38 @@ BANNER = r"""
  Version 1.0.0 · MIT License
 """
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def resolve_path(custom_path, default_rel):
+    if custom_path:
+        if os.path.exists(custom_path):
+            return custom_path
+        in_root = os.path.join(ROOT_DIR, custom_path)
+        if os.path.exists(in_root):
+            return in_root
+        return custom_path
+    if os.path.exists(default_rel):
+        return default_rel
+    in_root = os.path.join(ROOT_DIR, default_rel)
+    if os.path.exists(in_root):
+        return in_root
+    base_name = os.path.basename(default_rel)
+    if os.path.exists(base_name):
+        return base_name
+    in_root_base = os.path.join(ROOT_DIR, base_name)
+    if os.path.exists(in_root_base):
+        return in_root_base
+    return default_rel
+
 def print_banner():
     print(BANNER)
 
 def cmd_build(args):
     print("🚀 [BUILD] Compiling ProPing HTML Dashboards from Dataset...")
-    input_file = args.input or os.path.join("data", "master_cloud_directory.json")
+    input_file = resolve_path(args.input, os.path.join("data", "master_cloud_directory.json"))
     if not os.path.exists(input_file):
-        if os.path.exists("master_cloud_directory.json"):
-            input_file = "master_cloud_directory.json"
-        else:
-            print(f"❌ Input file not found: {input_file}")
-            return 1
+        print(f"❌ Input file not found: {input_file}")
+        return 1
 
     with open(input_file, "r", encoding="utf-8") as f:
         providers = json.load(f)
@@ -93,10 +113,7 @@ def cmd_build(args):
     return 0
 
 def cmd_status(args):
-    input_file = args.input or os.path.join("data", "master_cloud_directory.json")
-    if not os.path.exists(input_file):
-        input_file = "master_cloud_directory.json"
-    
+    input_file = resolve_path(args.input, os.path.join("data", "master_cloud_directory.json"))
     if not os.path.exists(input_file):
         print(f"❌ Database not found: {input_file}")
         return 1
@@ -181,14 +198,22 @@ def cmd_serve(args):
             print("ℹ️ No background server PID file found.")
             return 0
 
-    # Ensure index.html exists, auto-compile if missing
+    # Ensure directory is found
+    if not os.path.exists(directory):
+        in_root = os.path.join(ROOT_DIR, directory)
+        if os.path.exists(in_root):
+            directory = in_root
+
     index_path = os.path.join(directory, "index.html")
     if not os.path.exists(index_path):
-        if os.path.exists("dist/index.html"):
-            directory = "dist"
+        in_root_dist = os.path.join(ROOT_DIR, "dist", "index.html")
+        if os.path.exists(in_root_dist):
+            directory = os.path.join(ROOT_DIR, "dist")
         else:
             print("⚠️ Dashboard not built yet. Auto-compiling catalogs first...")
             cmd_build(args)
+            if os.path.exists(os.path.join(ROOT_DIR, "dist")):
+                directory = os.path.join(ROOT_DIR, "dist")
 
     if not os.path.exists(directory):
         directory = "."
@@ -276,9 +301,7 @@ def cmd_ping(args):
         print(json.dumps(metric, indent=2))
         return 0
 
-    input_file = args.input or os.path.join("data", "master_cloud_directory.json")
-    if not os.path.exists(input_file):
-        input_file = "master_cloud_directory.json"
+    input_file = resolve_path(args.input, os.path.join("data", "master_cloud_directory.json"))
 
     print(f"🚀 Running concurrent benchmark on {input_file} (workers={args.workers})...")
     with open(input_file, "r", encoding="utf-8") as f:
