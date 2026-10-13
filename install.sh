@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # ProPing - Global Cloud & Datacenter Latency Intelligence Suite
-# One-Command Installer & Live Temporary Server Launcher
+# One-Command Installer, Live ICMP Prober & Instant Dashboard Deployer
 # Repository: https://github.com/Lagtor-code/ProPing
 # ==============================================================================
 
@@ -28,7 +28,7 @@ cat << "EOF"
  |_|   |_|  \___/ |_|   |_|_| |_|\__, |
                                  |___/ 
  Global Cloud & Datacenter Latency Suite
- One-Command Instant Deployer · v1.0.0
+ Live Benchmark Prober & Deployer · v1.1.0
 EOF
 echo -e "${RESET}"
 
@@ -48,15 +48,15 @@ fi
 if ! command -v python3 >/dev/null 2>&1; then
     echo -e "${YELLOW}⚠️  python3 not found. Attempting automatic installation...${RESET}"
     if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update -y && sudo apt-get install -y python3 python3-minimal
+        sudo apt-get update -y && sudo apt-get install -y python3 python3-minimal iputils-ping
     elif command -v dnf >/dev/null 2>&1; then
-        sudo dnf install -y python3
+        sudo dnf install -y python3 iputils
     elif command -v yum >/dev/null 2>&1; then
-        sudo yum install -y python3
+        sudo yum install -y python3 iputils
     elif command -v apk >/dev/null 2>&1; then
-        apk add --no-cache python3
+        apk add --no-cache python3 iputils
     elif command -v pacman >/dev/null 2>&1; then
-        sudo pacman -Sy --noconfirm python
+        sudo pacman -Sy --noconfirm python iputils
     else
         echo -e "${RED}❌ python3 is required. Please install python3 and re-run.${RESET}"
         exit 1
@@ -108,72 +108,127 @@ exec "$PYTHON_BIN" "$INSTALL_DIR/proping.py" "\$@"
 EOF
 chmod +x "$CLI_WRAPPER"
 
-# Also symlink to /usr/bin if root for universal PATH access
 if [ "$EUID" -eq 0 ] && [ "$BIN_DIR" != "/usr/bin" ]; then
     ln -sf "$CLI_WRAPPER" /usr/bin/proping 2>/dev/null || true
 fi
 
 echo -e "  ${GREEN}✔${RESET} Command ${BOLD}proping${RESET} installed to ${CLI_WRAPPER}"
 
-# Ensure catalogs are built
-if [ ! -f "$INSTALL_DIR/dist/index.html" ]; then
-    echo -e "${BLUE}▶ Compiling cloud catalog templates...${RESET}"
-    (cd "$INSTALL_DIR" && "$PYTHON_BIN" proping.py build >/dev/null 2>&1)
-    echo -e "  ${GREEN}✔${RESET} Compiled 609 verified cloud providers."
+# Bulletproof Public IP Detection (Never returns HTML error tags)
+echo -e "${BLUE}▶ Detecting server network IP...${RESET}"
+PUB_IP=""
+LOCAL_ROUTE_IP=""
+
+# 1. Check local network interface route directly
+if command -v ip >/dev/null 2>&1; then
+    LOCAL_ROUTE_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7}')
+fi
+if [ -z "$LOCAL_ROUTE_IP" ] && command -v hostname >/dev/null 2>&1; then
+    LOCAL_ROUTE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 fi
 
-# Detect Public IP
-echo -e "${BLUE}▶ Detecting network IP...${RESET}"
-PUB_IP=""
-for ip_service in "https://api.ipify.org" "https://icanhazip.com" "https://ifconfig.me/ip"; do
-    if command -v curl >/dev/null 2>&1; then
-        PUB_IP=$(curl -4 -s --connect-timeout 2 "$ip_service" 2>/dev/null | tr -d '[:space:]')
-    elif command -v wget >/dev/null 2>&1; then
-        PUB_IP=$(wget -4 -qO- --timeout=2 "$ip_service" 2>/dev/null | tr -d '[:space:]')
+# Check if local IP is already a public IPv4 (not 10., 192.168., 172.16-31, 127.)
+if [[ "$LOCAL_ROUTE_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if ! [[ "$LOCAL_ROUTE_IP" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|127\.|169\.254\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.) ]]; then
+        PUB_IP="$LOCAL_ROUTE_IP"
     fi
-    if [[ "$PUB_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        break
-    fi
-done
+fi
+
+# 2. If behind NAT, query verified external endpoints with strict IPv4 regex validation
+if [ -z "$PUB_IP" ]; then
+    for ip_service in "https://api.ipify.org" "https://ip.sb" "https://checkip.amazonaws.com" "https://icanhazip.com" "https://ipecho.net/plain"; do
+        CANDIDATE=""
+        if command -v curl >/dev/null 2>&1; then
+            CANDIDATE=$(curl -4 -s --connect-timeout 2 "$ip_service" 2>/dev/null | tr -d '[:space:]')
+        elif command -v wget >/dev/null 2>&1; then
+            CANDIDATE=$(wget -4 -qO- --timeout=2 "$ip_service" 2>/dev/null | tr -d '[:space:]')
+        fi
+        if [[ "$CANDIDATE" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] && [[ "$CANDIDATE" != *"<"* ]] && [[ "$CANDIDATE" != *"html"* ]]; then
+            PUB_IP="$CANDIDATE"
+            break
+        fi
+    done
+fi
 
 if [ -z "$PUB_IP" ]; then
-    PUB_IP="127.0.0.1"
+    PUB_IP="${LOCAL_ROUTE_IP:-127.0.0.1}"
 fi
 echo -e "  ${GREEN}✔${RESET} Server Public IP: ${BOLD}${PUB_IP}${RESET}"
 
-# Parse command line flags for installer
-PORT=8080
+# Parse command line flags
+CUSTOM_PORT=""
 DAEMON_MODE=false
 NO_SERVE=false
+SKIP_BENCHMARK=false
+BENCHMARK_WORKERS=40
 
 for arg in "$@"; do
     case "$arg" in
-        --port=*) PORT="${arg#*=}" ;;
-        -p=*) PORT="${arg#*=}" ;;
+        --port=*) CUSTOM_PORT="${arg#*=}" ;;
+        -p=*) CUSTOM_PORT="${arg#*=}" ;;
         --daemon) DAEMON_MODE=true ;;
         -d) DAEMON_MODE=true ;;
         --no-serve) NO_SERVE=true ;;
+        --no-benchmark) SKIP_BENCHMARK=true ;;
+        --workers=*) BENCHMARK_WORKERS="${arg#*=}" ;;
     esac
 done
 
-# Check if port is in use, fallback to 8081 or 8000
-if command -v ss >/dev/null 2>&1; then
-    if ss -tuln | grep -q ":$PORT "; then
+# Intelligent Port Selection
+check_port() {
+    local p=$1
+    if command -v ss >/dev/null 2>&1; then
+        ss -tuln | grep -q ":${p} " && return 1 || return 0
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -tuln | grep -q ":${p} " && return 1 || return 0
+    fi
+    return 0
+}
+
+PORT=8080
+if [ -n "$CUSTOM_PORT" ]; then
+    PORT="$CUSTOM_PORT"
+else
+    # Try port 80 first if root (cleanest for web browsers)
+    if [ "$EUID" -eq 0 ] && check_port 80; then
+        PORT=80
+    elif check_port 8080; then
+        PORT=8080
+    elif check_port 8000; then
+        PORT=8000
+    elif check_port 8888; then
+        PORT=8888
+    elif check_port 3000; then
+        PORT=3000
+    else
         PORT=8081
     fi
 fi
 
-# Firewall hint
-if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
-    FW_HINT="⚠️  UFW is active! If dashboard doesn't open in browser, run: ${YELLOW}sudo ufw allow ${PORT}/tcp${RESET}"
-elif command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state 2>/dev/null | grep -q "running"; then
-    FW_HINT="⚠️  Firewalld is active! Run: ${YELLOW}sudo firewall-cmd --add-port=${PORT}/tcp --permanent && sudo firewall-cmd --reload${RESET}"
+# Automatically open firewall port if running as root
+if [ "$EUID" -eq 0 ]; then
+    iptables -I INPUT -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || true
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow "$PORT/tcp" >/dev/null 2>&1 || true
+    fi
+    if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
+        firewall-cmd --add-port="${PORT}/tcp" --permanent >/dev/null 2>&1 || true
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+fi
+
+# Live Benchmark Probing (Measures latencies from this server right now)
+if [ "$SKIP_BENCHMARK" = false ]; then
+    echo -e "\n${BLUE}▶ Initiating Live ICMP Latency Probing across 609 Global Datacenters...${RESET}"
+    echo -e "  ${YELLOW}⚡ Measuring live round-trip latency from this server (${PUB_IP}) right now...${RESET}"
+    (cd "$INSTALL_DIR" && "$PYTHON_BIN" proping.py benchmark --workers "$BENCHMARK_WORKERS" --count 2 --timeout 1)
 else
-    FW_HINT=""
+    echo -e "\n${CYAN}ℹ Skipping live benchmark (--no-benchmark specified). Compiling cached catalog...${RESET}"
+    (cd "$INSTALL_DIR" && "$PYTHON_BIN" proping.py build >/dev/null 2>&1)
 fi
 
 if [ "$NO_SERVE" = true ]; then
-    echo -e "\n${GREEN}${BOLD}🎉 ProPing installed successfully!${RESET}"
+    echo -e "\n${GREEN}${BOLD}🎉 ProPing benchmark complete & installed successfully!${RESET}"
     echo -e "Run ${CYAN}proping serve${RESET} to host dashboard, or ${CYAN}proping --help${RESET} for options."
     exit 0
 fi
@@ -181,27 +236,25 @@ fi
 if [ "$DAEMON_MODE" = true ]; then
     echo -e "\n${BLUE}▶ Starting ProPing background daemon on port ${PORT}...${RESET}"
     (cd "$INSTALL_DIR" && "$PYTHON_BIN" proping.py serve --port "$PORT" --daemon)
-    if [ -n "$FW_HINT" ]; then echo -e "$FW_HINT"; fi
     exit 0
 fi
 
-# Foreground Temporary Server
+# Foreground Interactive Server
 echo -e "\n${GREEN}========================================================================${RESET}"
-echo -e "${BOLD}${CYAN}  ⚡ ProPing Live Temporary Dashboard is RUNNING!${RESET}"
+echo -e "${BOLD}${CYAN}  ⚡ ProPing Live Telemetry & Latency Dashboard is RUNNING!${RESET}"
 echo -e "${GREEN}========================================================================${RESET}"
-echo -e "  🌐 ${BOLD}Main Dashboard (609 Providers):${RESET}"
+echo -e "  🌐 ${BOLD}Interactive Web Studio (Bento Grid & Table):${RESET}"
 echo -e "     👉 ${GREEN}${BOLD}http://${PUB_IP}:${PORT}/${RESET}"
 echo -e ""
-echo -e "  📊 ${BOLD}Hourly Billing Dashboard (62 Providers):${RESET}"
+echo -e "  📊 ${BOLD}Hourly Pay-As-You-Go Compute Directory:${RESET}"
 echo -e "     👉 ${CYAN}${BOLD}http://${PUB_IP}:${PORT}/hourly.html${RESET}"
+echo -e ""
+echo -e "  📄 ${BOLD}Ranked Text Summary Report:${RESET}"
+echo -e "     👉 ${PURPLE}${BOLD}http://${PUB_IP}:${PORT}/top_routes.txt${RESET}"
 echo -e "${GREEN}========================================================================${RESET}"
-if [ -n "$FW_HINT" ]; then
-    echo -e "  ${FW_HINT}"
-    echo -e "${GREEN}========================================================================${RESET}"
-fi
 echo -e "  ${YELLOW}💡 Press Ctrl+C at any time to stop this temporary server.${RESET}"
-echo -e "  💡 To run in the background instead, execute: ${BOLD}proping serve --daemon${RESET}"
-echo -e "  💡 To run live latency tests from this VPS: ${BOLD}proping benchmark${RESET}"
+echo -e "  💡 To run in the background instead: ${BOLD}proping serve --daemon${RESET}"
+echo -e "  💡 To run a new benchmark anytime:   ${BOLD}proping benchmark${RESET}"
 echo -e "${GREEN}========================================================================${RESET}\n"
 
 # Trap Ctrl+C for clean exit

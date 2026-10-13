@@ -103,10 +103,10 @@ def ping_target(ip, count=4, timeout_sec=2):
             "tested_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
         }
 
-def benchmark_providers(providers, max_workers=20, count=4, progress_callback=None):
+def benchmark_providers(providers, max_workers=40, count=2, timeout_sec=1, progress_callback=None):
     """
     Concurrently benchmarks a list of provider objects containing 'test_ip'.
-    Updates each provider in-place with network metrics.
+    Updates each provider in-place with network metrics and sorts by latency ascending.
     """
     total = len(providers)
     completed = 0
@@ -115,7 +115,7 @@ def benchmark_providers(providers, max_workers=20, count=4, progress_callback=No
         ip = p.get('test_ip')
         if not ip:
             return p, {"status": "NO_IP"}
-        metric = ping_target(ip, count=count)
+        metric = ping_target(ip, count=count, timeout_sec=timeout_sec)
         return p, metric
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -130,7 +130,13 @@ def benchmark_providers(providers, max_workers=20, count=4, progress_callback=No
                 p["jitter_ms"] = metric["jitter_ms"]
                 p["loss_pct"] = metric["loss_pct"]
                 p["status"] = metric["status"]
+            else:
+                p["status"] = metric.get("status", "TIMEOUT")
+                p["avg_ms"] = None
+                p["loss_pct"] = 100.0
             if progress_callback:
                 progress_callback(completed, total, p, metric)
 
+    # Sort in-place by avg_ms ascending (fastest first, None at bottom)
+    providers.sort(key=lambda x: (x.get("avg_ms") is None, float(x.get("avg_ms") or 99999)))
     return providers

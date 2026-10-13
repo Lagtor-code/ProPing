@@ -140,20 +140,62 @@ def cmd_status(args):
     print("=" * 60)
     return 0
 
+def is_public_ip(ip):
+    """Check if a string is a valid IPv4 public address (not private, loopback, or html)."""
+    if not ip or not isinstance(ip, str):
+        return False
+    if "<" in ip or ">" in ip or "html" in ip.lower() or "forbidden" in ip.lower():
+        return False
+    parts = ip.strip().split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return False
+    for n in nums:
+        if n < 0 or n > 255:
+            return False
+    # Exclude private, loopback, link-local, CGNAT
+    if nums[0] in (0, 10, 127):
+        return False
+    if nums[0] == 192 and nums[1] == 168:
+        return False
+    if nums[0] == 172 and 16 <= nums[1] <= 31:
+        return False
+    if nums[0] == 100 and 64 <= nums[1] <= 127:
+        return False
+    if nums[0] == 169 and nums[1] == 254:
+        return False
+    return True
+
 def detect_public_ip():
-    """Detect external public IP using lightweight standard library HTTP requests."""
+    """Detect external public IP using socket route and verified HTTP endpoints."""
+    # 1. Check local network interface route directly
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("1.1.1.1", 80))
+        local_route_ip = s.getsockname()[0]
+        s.close()
+        if is_public_ip(local_route_ip):
+            return local_route_ip
+    except Exception:
+        pass
+
+    # 2. Try reliable external endpoints with strict IP validation
     endpoints = [
         "https://api.ipify.org",
+        "https://ip.sb",
+        "https://checkip.amazonaws.com",
         "https://icanhazip.com",
-        "https://ifconfig.me/ip",
-        "https://ipinfo.io/ip",
+        "https://ipecho.net/plain",
     ]
     for url in endpoints:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "curl/7.88.1"})
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
-                raw = resp.read().decode("utf-8").strip()
-                if raw and len(raw.split(".")) == 4:
+            with urllib.request.urlopen(req, timeout=1.8) as resp:
+                raw = resp.read().decode("utf-8", errors="ignore").strip()
+                if is_public_ip(raw):
                     return raw
         except Exception:
             continue
@@ -253,12 +295,18 @@ def cmd_serve(args):
 
     server = None
     bind_port = port
-    for p_candidate in [port, port + 1, port + 2, 8000, 8888, 3000]:
+    # Candidates to try: user requested port, then 80 (if allowed), then 8080, 8000, 8888, 3000, 8081
+    candidates = [port]
+    for c in [80, 8080, 8000, 8888, 3000, 8081]:
+        if c not in candidates:
+            candidates.append(c)
+
+    for p_candidate in candidates:
         try:
             server = HTTPServer((host, p_candidate), Handler)
             bind_port = p_candidate
             break
-        except OSError:
+        except (OSError, PermissionError):
             continue
 
     if not server:
@@ -267,23 +315,25 @@ def cmd_serve(args):
 
     pub_ip = detect_public_ip()
     local_ip = detect_local_ip()
+    display_ip = pub_ip or (local_ip if is_public_ip(local_ip) else None) or "localhost"
 
-    print("\n" + "=" * 68)
+    print("\n" + "=" * 72)
     print("  ⚡ ProPing Live Telemetry & Latency Dashboard")
-    print("=" * 68)
-    if pub_ip:
-        print(f"  🌐 Public Link:    http://{pub_ip}:{bind_port}/")
-        print(f"  📊 Hourly Link:    http://{pub_ip}:{bind_port}/hourly.html")
-    if local_ip and local_ip != pub_ip:
+    print("=" * 72)
+    print(f"  🌐 Public Link:    http://{display_ip}:{bind_port}/")
+    print(f"  📊 Hourly Link:    http://{display_ip}:{bind_port}/hourly.html")
+    txt_check = os.path.join(directory, "top_routes.txt")
+    if os.path.exists(txt_check):
+        print(f"  📄 Text Summary:   http://{display_ip}:{bind_port}/top_routes.txt")
+    if local_ip and local_ip != display_ip:
         print(f"  🏠 Local Network:  http://{local_ip}:{bind_port}/")
-    print(f"  💻 Localhost:      http://localhost:{bind_port}/")
     print(f"  📁 Serving Path:   {os.path.abspath(directory)}")
-    print("=" * 68)
+    print("=" * 72)
     print("  👉 Click or paste the Public Link into your browser.")
     print("  👉 Press Ctrl+C at any time to shut down this temporary server.")
-    print("=" * 68 + "\n")
+    print("=" * 72 + "\n")
 
-    if not args.no_browser and pub_ip is None:
+    if not args.no_browser and (pub_ip is None or not is_public_ip(pub_ip)):
         url = f"http://localhost:{bind_port}/"
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
 
@@ -297,26 +347,118 @@ def cmd_serve(args):
 def cmd_ping(args):
     if args.target:
         print(f"🎯 Pinging target {args.target} (count={args.count})...")
-        metric = ping_target(args.target, count=args.count)
+        metric = ping_target(args.target, count=args.count, timeout_sec=getattr(args, 'timeout', 1))
         print(json.dumps(metric, indent=2))
         return 0
 
     input_file = resolve_path(args.input, os.path.join("data", "master_cloud_directory.json"))
+    if not os.path.exists(input_file):
+        print(f"❌ Input dataset not found: {input_file}")
+        return 1
 
-    print(f"🚀 Running concurrent benchmark on {input_file} (workers={args.workers})...")
     with open(input_file, "r", encoding="utf-8") as f:
         providers = json.load(f)
 
+    workers = getattr(args, 'workers', 40) or 40
+    count = getattr(args, 'count', 2) or 2
+    timeout_sec = getattr(args, 'timeout', 1) or 1
+
+    print("\n" + "=" * 76)
+    print(f"🚀 [BENCHMARK] Live ICMP Latency Probing across {len(providers)} Global Datacenters")
+    print(f"   Workers: {workers} threads · Packets: {count} · Timeout: {timeout_sec}s")
+    print("=" * 76)
+
     def progress(done, total, p, metric):
-        ms_str = f"{metric.get('avg_ms'):.1f}ms" if metric.get('avg_ms') else "TIMEOUT"
-        print(f"[{done}/{total}] {p.get('brand')[:25]:25} | {p.get('test_ip'):15} | {ms_str}")
+        pct = int((done / total) * 100)
+        bar_len = 24
+        filled = int(bar_len * done // total)
+        bar = "█" * filled + "░" * (bar_len - filled)
+        ms_val = f"{metric.get('avg_ms'):.1f}ms" if metric.get('avg_ms') else "TIMEOUT"
+        brand = p.get('brand', '')[:18]
+        sys.stdout.write(f"\r  [{bar}] {pct:3d}% ({done}/{total}) | {brand:18} -> {ms_val:8}")
+        sys.stdout.flush()
 
-    benchmark_providers(providers, max_workers=args.workers, count=args.count, progress_callback=progress)
+    benchmark_providers(providers, max_workers=workers, count=count, timeout_sec=timeout_sec, progress_callback=progress)
+    print("\n")
 
+    # Filter online
+    online = [p for p in providers if p.get('avg_ms') is not None]
+    online.sort(key=lambda x: float(x.get('avg_ms') or 99999))
+
+    # Print Top 20 Table
+    print("=" * 88)
+    print("🏆 TOP 20 LOWEST LATENCY CLOUD ROUTES FROM THIS SERVER")
+    print("=" * 88)
+    print(f" {'#':<3} {'Provider Brand':<26} {'Country':<18} {'Latency':<10} {'Loss':<7} {'Price':<14}")
+    print("-" * 88)
+    for idx, p in enumerate(online[:20], 1):
+        brand = str(p.get('brand', 'Unknown'))[:25]
+        country = str(p.get('country', 'Unknown'))[:16]
+        lat = f"{p.get('avg_ms'):.1f} ms"
+        loss = f"{int(p.get('loss_pct', 0))}%"
+        price = str(p.get('starting_price', 'N/A'))[:12]
+        print(f" {idx:<3} {brand:<26} {country:<18} {lat:<10} {loss:<7} {price:<14}")
+    print("=" * 88)
+
+    # Statistics
+    pings = [float(p['avg_ms']) for p in online]
+    sub50 = sum(1 for ms in pings if ms < 50.0)
+    sub80 = sum(1 for ms in pings if 50.0 <= ms < 80.0)
+    sub120 = sum(1 for ms in pings if 80.0 <= ms < 120.0)
+    avg_ping = sum(pings) / max(1, len(pings))
+    best_ping = min(pings) if pings else 0.0
+
+    print("📊 Benchmark Summary:")
+    print(f"   ✔ Total Providers Tested: {len(providers)} ({len(set(p.get('country') for p in providers if p.get('country')))} Countries)")
+    print(f"   ✔ Reachable / Online:     {len(online)} providers")
+    print(f"   ⚡ Sub-50ms Direct Routes: {sub50} providers")
+    print(f"   ⚡ 50–80ms Prime Europe:   {sub80} providers")
+    print(f"   ⚡ 80–120ms West Europe:   {sub120} providers")
+    print(f"   🥇 Lowest Ping Observed:   {best_ping:.2f} ms ({online[0].get('brand') if online else 'None'})")
+    print(f"   📈 Global Average Latency: {avg_ping:.1f} ms")
+    print("=" * 88 + "\n")
+
+    # Save JSON results
     out_file = args.output or input_file
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(providers, f, indent=2, ensure_ascii=False)
-    print(f"✅ Benchmark finished and saved to {out_file}")
+    print(f"💾 Updated dataset saved to: {out_file}")
+
+    # Generate top_routes.txt
+    summary_lines = [
+        "=" * 88,
+        "ProPing - Ranked Latency Benchmark Summary",
+        f"Tested At: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        "=" * 88,
+        f" {'#':<3} {'Provider Brand':<26} {'Country':<18} {'Latency':<10} {'Loss':<7} {'Price':<14}",
+        "-" * 88,
+    ]
+    for idx, p in enumerate(online[:50], 1):
+        brand = str(p.get('brand', 'Unknown'))[:25]
+        country = str(p.get('country', 'Unknown'))[:16]
+        lat = f"{p.get('avg_ms'):.1f} ms"
+        loss = f"{int(p.get('loss_pct', 0))}%"
+        price = str(p.get('starting_price', 'N/A'))[:12]
+        summary_lines.append(f" {idx:<3} {brand:<26} {country:<18} {lat:<10} {loss:<7} {price:<14}")
+    summary_lines.append("=" * 88)
+    summary_txt = "\n".join(summary_lines) + "\n"
+
+    for t_dest in ["top_routes.txt", os.path.join("dist", "top_routes.txt"), os.path.join(ROOT_DIR, "top_routes.txt"), os.path.join(ROOT_DIR, "dist", "top_routes.txt")]:
+        try:
+            os.makedirs(os.path.dirname(t_dest) or ".", exist_ok=True)
+            with open(t_dest, "w", encoding="utf-8") as f:
+                f.write(summary_txt)
+        except Exception:
+            pass
+
+    # Rebuild HTML dashboards with live results
+    if not getattr(args, 'no_build', False):
+        cmd_build(args)
+
+    # Immediately serve if requested
+    if getattr(args, 'serve', False):
+        return cmd_serve(args)
+
     return 0
 
 def main():
@@ -354,8 +496,12 @@ def main():
     p_ping.add_argument("-t", "--target", help="Single IP target to test")
     p_ping.add_argument("-i", "--input", help="JSON dataset of targets")
     p_ping.add_argument("-o", "--output", help="Output path for benchmarked JSON")
-    p_ping.add_argument("-c", "--count", type=int, default=4, help="Packets per host (default: 4)")
-    p_ping.add_argument("-w", "--workers", type=int, default=20, help="Concurrent worker threads (default: 20)")
+    p_ping.add_argument("-c", "--count", type=int, default=2, help="Packets per host (default: 2)")
+    p_ping.add_argument("-w", "--workers", type=int, default=40, help="Concurrent worker threads (default: 40)")
+    p_ping.add_argument("--timeout", type=int, default=1, help="Ping timeout in seconds (default: 1)")
+    p_ping.add_argument("--no-build", action="store_true", help="Do not rebuild HTML catalog after benchmark")
+    p_ping.add_argument("--serve", action="store_true", help="Immediately launch web server after benchmark")
+    p_ping.add_argument("-p", "--port", type=int, default=8080, help="Port to serve on if --serve is used")
 
     args = parser.parse_args()
 
