@@ -54,3 +54,7 @@ part[1-2].txt
 *.bak
 archive/
 deploy_to_vps.py
+*.pdf
+kermanshah_*.txt
+riazi_*.txt
+top_routes.txt

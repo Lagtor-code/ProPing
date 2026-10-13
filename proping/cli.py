@@ -13,6 +13,7 @@ import socket
 import urllib.request
 import signal
 import subprocess
+import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import threading
 
@@ -72,29 +73,42 @@ def cmd_build(args):
     providers.sort(key=lambda x: (x.get("avg_ms") is None, float(x.get("avg_ms") or 99999)))
     print(f"  📊 Loaded {len(providers)} verified cloud providers.")
 
-    template_path = args.template or None
+    template_path = getattr(args, 'template', None)
     
     # Master Build
     html_content = build_html_catalog(providers, template_path=template_path)
     
-    out_master = args.output or os.path.join("dist", "index.html")
+    out_master = getattr(args, 'output', None)
+    if not out_master or out_master.endswith('.json'):
+        out_master = os.path.join(ROOT_DIR, "dist", "index.html")
+        
     os.makedirs(os.path.dirname(out_master) or ".", exist_ok=True)
     with open(out_master, "w", encoding="utf-8") as f:
         f.write(html_content)
     print(f"  ✅ Built Master Catalog: {out_master} ({len(providers)} providers)")
 
     # Also save to root global_cloud_catalog.html for backward compatibility
-    with open("global_cloud_catalog.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
+    try:
+        with open(os.path.join(ROOT_DIR, "global_cloud_catalog.html"), "w", encoding="utf-8") as f:
+            f.write(html_content)
+    except Exception:
+        pass
 
     # Hourly Build
     hourly = [p for p in providers if p.get("hourly_billing") or 'hour' in str(p.get("billing_model", '')).lower()]
     html_hourly = build_html_catalog(hourly, template_path=template_path, title_suffix=f"({len(hourly)} Hourly Providers)")
     
-    out_hourly = args.hourly_output or os.path.join("dist", "hourly.html")
+    out_hourly = getattr(args, 'hourly_output', None) or os.path.join(ROOT_DIR, "dist", "hourly.html")
+    os.makedirs(os.path.dirname(out_hourly) or ".", exist_ok=True)
     with open(out_hourly, "w", encoding="utf-8") as f:
         f.write(html_hourly)
     print(f"  ✅ Built Hourly Catalog: {out_hourly} ({len(hourly)} hourly providers)")
+
+    try:
+        with open(os.path.join(ROOT_DIR, "master_hourly_directory.html"), "w", encoding="utf-8") as f:
+            f.write(html_hourly)
+    except Exception:
+        pass
 
     with open("master_hourly_directory.html", "w", encoding="utf-8") as f:
         f.write(html_hourly)
