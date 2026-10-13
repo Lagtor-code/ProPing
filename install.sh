@@ -66,6 +66,20 @@ fi
 PYTHON_BIN=$(command -v python3)
 echo -e "  ${GREEN}✔${RESET} Python detected: ${BOLD}$($PYTHON_BIN --version)${RESET}"
 
+# Check for ping utility
+if ! command -v ping >/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  ICMP ping utility not found. Installing iputils-ping...${RESET}"
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -y && apt-get install -y iputils-ping || true
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y iputils || true
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y iputils || true
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache iputils || true
+    fi
+fi
+
 # Download or update repository
 REPO_URL="https://github.com/Lagtor-code/ProPing.git"
 TAR_URL="https://github.com/Lagtor-code/ProPing/archive/refs/heads/main.tar.gz"
@@ -74,8 +88,15 @@ echo -e "${BLUE}▶ Deploying ProPing into ${BOLD}${INSTALL_DIR}${RESET}..."
 
 if command -v git >/dev/null 2>&1; then
     if [ -d "$INSTALL_DIR/.git" ]; then
-        echo -e "  ${CYAN}↻${RESET} Updating existing repository..."
-        git -C "$INSTALL_DIR" pull --quiet || true
+        echo -e "  ${CYAN}↻${RESET} Updating existing repository to latest version..."
+        if ! (git -C "$INSTALL_DIR" fetch origin main --quiet 2>/dev/null && \
+              git -C "$INSTALL_DIR" checkout -f main --quiet 2>/dev/null && \
+              git -C "$INSTALL_DIR" reset --hard origin/main --quiet 2>/dev/null && \
+              git -C "$INSTALL_DIR" clean -fd --quiet 2>/dev/null); then
+            echo -e "  ${YELLOW}↻${RESET} Re-cloning fresh repository..."
+            rm -rf "$INSTALL_DIR"
+            git clone --quiet "$REPO_URL" "$INSTALL_DIR"
+        fi
     else
         mkdir -p "$(dirname "$INSTALL_DIR")"
         rm -rf "$INSTALL_DIR"
@@ -178,9 +199,9 @@ done
 check_port() {
     local p=$1
     if command -v ss >/dev/null 2>&1; then
-        ss -tuln | grep -q ":${p} " && return 1 || return 0
+        ss -tuln | grep -E "[:.]${p}[[:space:]]" && return 1 || return 0
     elif command -v netstat >/dev/null 2>&1; then
-        netstat -tuln | grep -q ":${p} " && return 1 || return 0
+        netstat -tuln | grep -E "[:.]${p}[[:space:]]" && return 1 || return 0
     fi
     return 0
 }
@@ -260,6 +281,11 @@ echo -e "${GREEN}===============================================================
 echo -e "  ${YELLOW}💡 Press Ctrl+C at any time to stop this temporary server.${RESET}"
 echo -e "  💡 To run in the background instead: ${BOLD}proping serve --daemon${RESET}"
 echo -e "  💡 To run a new benchmark anytime:   ${BOLD}proping benchmark${RESET}"
+echo -e "  🔍 VPS Local Verification:          ${BOLD}curl -I http://127.0.0.1:${PORT}/${RESET}"
+if [ "$PORT" != "80" ]; then
+    echo -e "  ⚠️  Cloud Firewall: If browser link times out, ensure TCP port ${BOLD}${PORT}${RESET}"
+    echo -e "     is allowed in your VPS cloud console (e.g. Hetzner / AWS / ArvanCloud)."
+fi
 echo -e "${GREEN}========================================================================${RESET}\n"
 
 # Trap Ctrl+C for clean exit

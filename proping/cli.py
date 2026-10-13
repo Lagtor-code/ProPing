@@ -61,7 +61,17 @@ def print_banner():
 
 def cmd_build(args):
     print("🚀 [BUILD] Compiling ProPing HTML Dashboards from Dataset...")
-    input_file = resolve_path(args.input, os.path.join("data", "master_cloud_directory.json"))
+    input_file = getattr(args, 'input', None)
+    if input_file:
+        input_file = resolve_path(input_file, os.path.join("data", "master_cloud_directory.json"))
+    else:
+        # Check if live benchmark results exist in dist/ first
+        bench_file = os.path.join(ROOT_DIR, "dist", "benchmark_results.json")
+        if os.path.exists(bench_file):
+            input_file = bench_file
+        else:
+            input_file = resolve_path(None, os.path.join("data", "master_cloud_directory.json"))
+
     if not os.path.exists(input_file):
         print(f"❌ Input file not found: {input_file}")
         return 1
@@ -87,7 +97,7 @@ def cmd_build(args):
         f.write(html_content)
     print(f"  ✅ Built Master Catalog: {out_master} ({len(providers)} providers)")
 
-    # Also save to root global_cloud_catalog.html for backward compatibility
+    # Also save to root global_cloud_catalog.html if root directory allows
     try:
         with open(os.path.join(ROOT_DIR, "global_cloud_catalog.html"), "w", encoding="utf-8") as f:
             f.write(html_content)
@@ -109,9 +119,6 @@ def cmd_build(args):
             f.write(html_hourly)
     except Exception:
         pass
-
-    with open("master_hourly_directory.html", "w", encoding="utf-8") as f:
-        f.write(html_hourly)
 
     # Update desktop NewUI.html if exists
     desktop_newui = r"C:\Users\Meow\Desktop\NewUI.html"
@@ -443,8 +450,11 @@ def cmd_ping(args):
     print(f"   📈 Global Average Latency: {avg_ping:.1f} ms")
     print("=" * 88 + "\n")
 
-    # Save JSON results
-    out_file = args.output or input_file
+    # Save JSON results to dist directory by default to maintain clean git tree
+    out_file = getattr(args, 'output', None)
+    if not out_file:
+        out_file = os.path.join(ROOT_DIR, "dist", "benchmark_results.json")
+    os.makedirs(os.path.dirname(out_file) or ".", exist_ok=True)
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(providers, f, indent=2, ensure_ascii=False)
     print(f"💾 Updated dataset saved to: {out_file}")
@@ -517,7 +527,7 @@ def main():
     p_serve.add_argument("--no-browser", action="store_true", help="Do not automatically launch browser")
 
     # Ping / Benchmark
-    p_ping = subparsers.add_parser("benchmark", help="Run multi-threaded ICMP ping benchmark")
+    p_ping = subparsers.add_parser("benchmark", aliases=["ping"], help="Run multi-threaded ICMP ping benchmark")
     p_ping.add_argument("-t", "--target", help="Single IP target to test")
     p_ping.add_argument("-i", "--input", help="JSON dataset of targets")
     p_ping.add_argument("-o", "--output", help="Output path for benchmarked JSON")
@@ -541,7 +551,7 @@ def main():
         sys.exit(cmd_status(args))
     elif args.subcommand == "serve":
         sys.exit(cmd_serve(args))
-    elif args.subcommand == "benchmark":
+    elif args.subcommand in ("benchmark", "ping"):
         sys.exit(cmd_ping(args))
     else:
         parser.print_help()
