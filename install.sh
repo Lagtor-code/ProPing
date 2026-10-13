@@ -240,17 +240,22 @@ if [ "$DAEMON_MODE" = true ]; then
 fi
 
 # Foreground Interactive Server
+PORT_SUFFIX=""
+if [ "$PORT" != "80" ]; then
+    PORT_SUFFIX=":${PORT}"
+fi
+
 echo -e "\n${GREEN}========================================================================${RESET}"
 echo -e "${BOLD}${CYAN}  ⚡ ProPing Live Telemetry & Latency Dashboard is RUNNING!${RESET}"
 echo -e "${GREEN}========================================================================${RESET}"
 echo -e "  🌐 ${BOLD}Interactive Web Studio (Bento Grid & Table):${RESET}"
-echo -e "     👉 ${GREEN}${BOLD}http://${PUB_IP}:${PORT}/${RESET}"
+echo -e "     👉 ${GREEN}${BOLD}http://${PUB_IP}${PORT_SUFFIX}/${RESET}"
 echo -e ""
 echo -e "  📊 ${BOLD}Hourly Pay-As-You-Go Compute Directory:${RESET}"
-echo -e "     👉 ${CYAN}${BOLD}http://${PUB_IP}:${PORT}/hourly.html${RESET}"
+echo -e "     👉 ${CYAN}${BOLD}http://${PUB_IP}${PORT_SUFFIX}/hourly.html${RESET}"
 echo -e ""
 echo -e "  📄 ${BOLD}Ranked Text Summary Report:${RESET}"
-echo -e "     👉 ${PURPLE}${BOLD}http://${PUB_IP}:${PORT}/top_routes.txt${RESET}"
+echo -e "     👉 ${PURPLE}${BOLD}http://${PUB_IP}${PORT_SUFFIX}/top_routes.txt${RESET}"
 echo -e "${GREEN}========================================================================${RESET}"
 echo -e "  ${YELLOW}💡 Press Ctrl+C at any time to stop this temporary server.${RESET}"
 echo -e "  💡 To run in the background instead: ${BOLD}proping serve --daemon${RESET}"

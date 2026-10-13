@@ -226,10 +226,32 @@ def detect_local_ip():
     except Exception:
         return "127.0.0.1"
 
+def find_available_port(host, preferred_port=8080):
+    """Find the best available open port, checking preferred port, 80, 8080, 8000, 8888, 3000."""
+    candidates = []
+    if preferred_port:
+        candidates.append(preferred_port)
+    for c in [80, 8080, 8000, 8888, 3000, 8081, 8082, 8088]:
+        if c not in candidates:
+            candidates.append(c)
+
+    for p in candidates:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, p))
+            s.close()
+            return p
+        except Exception:
+            continue
+    return preferred_port or 8080
+
 def cmd_serve(args):
-    port = getattr(args, "port", None) or 8080
+    req_port = getattr(args, "port", None)
     host = getattr(args, "host", None) or "0.0.0.0"
     directory = getattr(args, "dir", None) or "dist"
+
+    port = req_port or find_available_port(host, 8080)
 
     PID_FILE = os.path.expanduser("~/.proping_serve.pid")
 
@@ -288,12 +310,13 @@ def cmd_serve(args):
             f.write(str(p.pid))
 
         pub_ip = detect_public_ip() or host
+        port_suffix = "" if port == 80 else f":{port}"
         print("=" * 66)
         print("⚡ ProPing Background Daemon Started!")
         print("=" * 66)
         print(f"  PID:              {p.pid}")
-        print(f"  🌐 Public Link:   http://{pub_ip}:{port}/")
-        print(f"  📊 Hourly View:   http://{pub_ip}:{port}/hourly.html")
+        print(f"  🌐 Public Link:   http://{pub_ip}{port_suffix}/")
+        print(f"  📊 Hourly View:   http://{pub_ip}{port_suffix}/hourly.html")
         print(f"  📝 Log File:      {log_file}")
         print("=" * 66)
         print("  💡 To stop daemon anytime, run: proping serve --stop\n")
@@ -303,44 +326,32 @@ def cmd_serve(args):
         def __init__(self, *a, **kw):
             super().__init__(*a, directory=directory, **kw)
         def log_message(self, format, *a):
-            # Suppress normal asset logs to keep console clean
             if a and len(a) > 1 and str(a[1]) not in ("200", "304"):
                 super().log_message(format, *a)
 
     server = None
     bind_port = port
-    # Candidates to try: user requested port, then 80 (if allowed), then 8080, 8000, 8888, 3000, 8081
-    candidates = [port]
-    for c in [80, 8080, 8000, 8888, 3000, 8081]:
-        if c not in candidates:
-            candidates.append(c)
-
-    for p_candidate in candidates:
-        try:
-            server = HTTPServer((host, p_candidate), Handler)
-            bind_port = p_candidate
-            break
-        except (OSError, PermissionError):
-            continue
-
-    if not server:
-        print(f"❌ Could not bind server to host {host} on port {port} or fallback ports.")
-        return 1
+    try:
+        server = HTTPServer((host, bind_port), Handler)
+    except (OSError, PermissionError):
+        bind_port = find_available_port(host, bind_port + 1)
+        server = HTTPServer((host, bind_port), Handler)
 
     pub_ip = detect_public_ip()
     local_ip = detect_local_ip()
     display_ip = pub_ip or (local_ip if is_public_ip(local_ip) else None) or "localhost"
+    port_suffix = "" if bind_port == 80 else f":{bind_port}"
 
     print("\n" + "=" * 72)
     print("  ⚡ ProPing Live Telemetry & Latency Dashboard")
     print("=" * 72)
-    print(f"  🌐 Public Link:    http://{display_ip}:{bind_port}/")
-    print(f"  📊 Hourly Link:    http://{display_ip}:{bind_port}/hourly.html")
+    print(f"  🌐 Public Link:    http://{display_ip}{port_suffix}/")
+    print(f"  📊 Hourly Link:    http://{display_ip}{port_suffix}/hourly.html")
     txt_check = os.path.join(directory, "top_routes.txt")
     if os.path.exists(txt_check):
-        print(f"  📄 Text Summary:   http://{display_ip}:{bind_port}/top_routes.txt")
+        print(f"  📄 Text Summary:   http://{display_ip}{port_suffix}/top_routes.txt")
     if local_ip and local_ip != display_ip:
-        print(f"  🏠 Local Network:  http://{local_ip}:{bind_port}/")
+        print(f"  🏠 Local Network:  http://{local_ip}{port_suffix}/")
     print(f"  📁 Serving Path:   {os.path.abspath(directory)}")
     print("=" * 72)
     print("  👉 Click or paste the Public Link into your browser.")
